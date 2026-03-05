@@ -1,4 +1,3 @@
-# System-MCA
 # МСА: Многофункциональная Система Агентов ИИ 🚀
 
 ![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
