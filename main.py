@@ -14,6 +14,7 @@ import httpx
 from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import get_settings
@@ -53,6 +54,8 @@ class SummarizeRequest(BaseModel):
 
 class McpToolsRequest(BaseModel):
     server_url: str
+
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 @app.get("/health")
 async def health():
