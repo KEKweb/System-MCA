@@ -50,9 +50,9 @@ pip install -r requirements.txt
 
 2. Запустите оркестратор:
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8080
+uvicorn app.main:app --host 0.0.0.0 --port 6190
 ```
-3. Откройте веб-интерфейс по адресу: `http://localhost:8080/static/index.html`
+3. Откройте веб-интерфейс по адресу: `http://localhost:6190/`
 
 ---
 *Проект разработан специально для участия во Всероссийской научно-практической конференции «Старт в инновации».*
