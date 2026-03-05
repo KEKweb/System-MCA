@@ -12,7 +12,7 @@ from ..crypto import encrypt, decrypt
 
 cfg = get_settings()
 
-EMBED_DIM = 1024
+EMBED_DIM = 2560
 
 
 class RAGService:
