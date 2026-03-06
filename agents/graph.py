@@ -18,10 +18,10 @@ from typing import AsyncIterator
 
 from langgraph.graph import StateGraph, END
 
-from ..services.llm    import stream_generate, generate_once
-from ..services.router import get_router
-from ..services.rag    import get_rag
-from ..services.search import web_search
+from services.llm    import stream_generate, generate_once
+from services.router import get_router
+from services.rag    import get_rag
+from services.search import web_search
 
 MAX_RETRIES        = 2   # максимум retry после первой попытки
 CRITIC_PASS_SCORE  = 7   # минимальная оценка критика из 10
