@@ -5,7 +5,7 @@
 import json
 import httpx
 from typing import AsyncIterator
-from ..config import get_settings
+from config import get_settings
 
 cfg = get_settings()
 
