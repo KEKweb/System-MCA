@@ -1,6 +1,6 @@
 """services/search.py — SearXNG клиент"""
 import httpx
-from ..config import get_settings
+from config import get_settings
 
 cfg = get_settings()
 
