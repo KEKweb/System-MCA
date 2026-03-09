@@ -396,9 +396,20 @@
         let isGenerating = false;   // защита от двойной отправки
         let clientUuid = null;      // UUID пользователя (генерируется один раз, хранится в localStorage)
 
+        const generateUUID = () => {
+            if (typeof crypto !== 'undefined' && crypto.generateUUID) {
+                return crypto.randomUUID();
+            }
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                var r = Math.random() * 16 | 0, 
+                v = c == 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        };
+
         clientUuid = localStorage.getItem('client_uuid');
         if (!clientUuid) {
-            clientUuid = crypto.randomUUID();
+            clientUuid = generateUUID();
             localStorage.setItem('client_uuid', clientUuid);
         }
 
@@ -578,7 +589,7 @@
             if (!text || isGenerating) return;
 
             if (!currentChatId) {
-                currentChatId = crypto.randomUUID();
+                currentChatId = generateUUID();
                 const newChat = {
                     id: currentChatId,
                     title: text.slice(0, 35) + (text.length > 35 ? "..." : ""),
@@ -773,7 +784,7 @@
             input.value = "";
 
             if (!currentChatId) {
-                currentChatId = crypto.randomUUID();
+                currentChatId = generateUUID();
                 const newChat = {
                     id: currentChatId,
                     title: "Документ: " + file.name.slice(0, 25),
