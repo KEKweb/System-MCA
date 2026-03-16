@@ -57,8 +57,6 @@ class SummarizeRequest(BaseModel):
 class McpToolsRequest(BaseModel):
     server_url: str
 
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
-
 @app.get("/health")
 async def health():
     """
@@ -377,3 +375,5 @@ async def startup():
         log.info("Semantic router инициализирован")
     except Exception as e:
         log.warning("Semantic router недоступен при старте: %s", e)
+
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
