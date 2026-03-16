@@ -49,7 +49,7 @@ pip install -r requirements.txt
 
 2. Запустите оркестратор:
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 6190
+uvicorn main:app --host 0.0.0.0 --port 6190
 ```
 3. Откройте веб-интерфейс по адресу: `http://localhost:6190/`
 
