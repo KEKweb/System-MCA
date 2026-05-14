@@ -481,6 +481,103 @@
             border-radius: 0 6px 6px 0;
         }
 
+        /* Блок вызова инструмента */
+        .tool-call-block {
+            margin-bottom: 0.75rem;
+            padding: 0.6rem 1rem;
+            border-radius: 8px;
+            font-size: 0.82rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(5, 150, 105, 0.06);
+            border: 1px solid rgba(5, 150, 105, 0.15);
+            color: var(--accent);
+        }
+
+        .tool-call-block.executing {
+            animation: pulse 1.5s infinite;
+        }
+
+        .tool-call-block.result {
+            background: rgba(5, 150, 105, 0.1);
+            border-color: var(--accent);
+            color: var(--text-header);
+        }
+
+        .tool-call-icon {
+            font-size: 1rem;
+        }
+
+        .tool-call-name {
+            font-weight: 600;
+            font-family: monospace;
+        }
+
+        .tool-call-args {
+            color: #5a6b62;
+            font-size: 0.75rem;
+            margin-left: auto;
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* Кнопка копирования */
+        .copy-btn {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border);
+            color: #555;
+            width: 30px;
+            height: 30px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            transition: 0.2s;
+            opacity: 0;
+        }
+
+        .message-wrapper:hover .copy-btn {
+            opacity: 1;
+        }
+
+        .copy-btn:hover {
+            background: rgba(255,255,255,0.1);
+            color: var(--text-header);
+        }
+
+        .copy-btn.copied {
+            color: var(--accent);
+            border-color: var(--accent);
+        }
+
+        /* Кнопка экспорта */
+        .export-btn {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 0.5rem 0.8rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .export-btn:hover {
+            border-color: var(--accent);
+            color: var(--text-header);
+        }
+
         /* Input Area */
         .input-area {
             width: 100%;
@@ -929,6 +1026,12 @@
                 </svg>
                 Инструменты MCP
             </button>
+            <button class="export-btn" onclick="exportChat()" id="exportBtn" style="display:none; margin-top:8px;">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                </svg>
+                Экспорт
+            </button>
         </div>
     </div>
 
@@ -1148,8 +1251,15 @@
             container.innerHTML = chat.messages.map(m => {
                 const isUser = m.role === 'user';
                 const content = isUser ? escapeHtml(m.content) : parseThinking(m.content);
+                const rawContent = isUser ? m.content : m.content;
                 return `
-                    <div class="message-wrapper">
+                    <div class="message-wrapper" style="position:relative;">
+                        <button class="copy-btn" onclick="copyMessage(this, ${JSON.stringify(m.content).replace(/"/g, '&quot;')})" title="Копировать">
+                            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path>
+                            </svg>
+                        </button>
                         <div class="message-header ${isUser ? 'user' : ''}">${isUser ? 'ВЫ' : 'AGENT CLUSTER'}</div>
                         <div class="message-content ${isUser ? 'user' : ''}">${isUser ? content : marked.parse(content)}</div>
                     </div>`;
@@ -1257,6 +1367,8 @@
                 const decoder = new TextDecoder();
                 let buffer = "";
                 let pipelineMeta = [];
+                let toolCallBlocks = [];
+                let firstTokenReceived = false;
 
                 while (true) {
                     const { done, value } = await reader.read();
@@ -1272,21 +1384,26 @@
                         try {
                             const data = JSON.parse(raw);
                             if (data.token !== undefined) {
+                                firstTokenReceived = true;
                                 assistantMsg.content += data.token;
-                                updateLastMessage(assistantMsg.content, pipelineMeta);
+                                updateLastMessage(assistantMsg.content, pipelineMeta, toolCallBlocks);
+                            }
+                            if (data.tool_call) {
+                                toolCallBlocks.push({ type: "executing", ...data.tool_call });
+                                updateLastMessage(assistantMsg.content, pipelineMeta, toolCallBlocks);
                             }
                             if (data.retry) {
                                 assistantMsg.content = "";
                                 pipelineMeta.push({ type: "retry", attempt: data.attempt, max: 2 });
-                                updateLastMessage(assistantMsg.content, pipelineMeta);
+                                updateLastMessage(assistantMsg.content, pipelineMeta, toolCallBlocks);
                             }
                             if (data.critic) {
                                 pipelineMeta.push({ type: "critic", ...data.critic });
-                                updateLastMessage(assistantMsg.content, pipelineMeta);
+                                updateLastMessage(assistantMsg.content, pipelineMeta, toolCallBlocks);
                             }
                             if (data.error) {
                                 assistantMsg.content += `\n⚠️ Ошибка: ${data.error}`;
-                                updateLastMessage(assistantMsg.content, pipelineMeta);
+                                updateLastMessage(assistantMsg.content, pipelineMeta, toolCallBlocks);
                                 saveChat(chat);
                             }
                         } catch { }
@@ -1305,7 +1422,7 @@
             }
         }
 
-        function updateLastMessage(content, pipelineMeta) {
+        function updateLastMessage(content, pipelineMeta, toolCallBlocks) {
             const container = document.getElementById("chatContainer");
             const wrappers = container.querySelectorAll(".message-wrapper");
             const last = wrappers[wrappers.length - 1];
@@ -1314,6 +1431,27 @@
             if (!msgEl) return;
 
             let html = "";
+            
+            // Tool call indicators
+            if (toolCallBlocks && toolCallBlocks.length > 0) {
+                toolCallBlocks.forEach(item => {
+                    if (item.type === "executing") {
+                        const argStr = item.arguments ? JSON.stringify(item.arguments).slice(0, 80) : "";
+                        const toolNames = {
+                            "web_search": "Поиск в интернете",
+                            "rag_search": "Поиск в документах",
+                            "mcp_call_tool": `MCP: ${item.name}`
+                        };
+                        const displayName = toolNames[item.name] || item.name;
+                        html += `<div class="tool-call-block executing">
+                            <span class="tool-call-icon">⏳</span>
+                            <span class="tool-call-name">${escapeHtml(displayName)}</span>
+                            ${argStr ? `<span class="tool-call-args">${escapeHtml(argStr)}</span>` : ""}
+                        </div>`;
+                    }
+                });
+            }
+
             if (pipelineMeta && pipelineMeta.length > 0) {
                 pipelineMeta.forEach(item => {
                     if (item.type === "retry") {
@@ -1465,10 +1603,66 @@
             }
         }
 
-        function closeSidebar() {
+             function closeSidebar() {
             document.querySelector('.sidebar').classList.remove('open');
             document.getElementById('sidebarOverlay').classList.remove('visible');
             document.getElementById('hamburgerBtn').classList.remove('open');
+        }
+
+        function copyMessage(btn, text) {
+            navigator.clipboard.writeText(text).then(() => {
+                btn.classList.add('copied');
+                btn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+                setTimeout(() => {
+                    btn.classList.remove('copied');
+                    btn.innerHTML = '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path></svg>';
+                }, 1500);
+            }).catch(() => {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+            });
+        }
+
+        function exportChat() {
+            if (!currentChatId) return;
+            const chat = chats.find(c => c.id === currentChatId);
+            if (!chat) return;
+
+            const format = prompt("Выберите формат: json или md:", "md");
+            if (!format) return;
+
+            let content, filename, type;
+
+            if (format.toLowerCase() === "json") {
+                content = JSON.stringify(chat, null, 2);
+                filename = `chat_${currentChatId}.json`;
+                type = "application/json";
+            } else {
+                // Markdown format
+                let md = `# ${chat.title}\n\n`;
+                md += `Дата: ${new Date(chat.updated_at).toLocaleString()}\n\n---\n\n`;
+                chat.messages.forEach(m => {
+                    const role = m.role === 'user' ? 'Вы' : 'Ассистент';
+                    const date = new Date().toLocaleTimeString();
+                    md += `### ${role} (${date})\n\n`;
+                    md += `${m.content}\n\n---\n\n`;
+                });
+                content = md;
+                filename = `chat_${currentChatId}.md`;
+                type = "text/markdown";
+            }
+
+            const blob = new Blob([content], { type: "charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
         }
 
         const _origSelectChat = selectChat;

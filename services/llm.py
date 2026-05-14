@@ -261,6 +261,10 @@ async def stream_generate(
                             yield "data: [DONE]\n\n"
                             return
 
+                        # Emit tool_call events for frontend visualization
+                        for tc in tool_calls:
+                            yield f"data: {json.dumps({'tool_call': tc}, ensure_ascii=False)}\n\n"
+
                         # Execute tool calls
                         tool_results = await _execute_tool_calls(
                             tool_calls, tools, payload.get("messages", [])
