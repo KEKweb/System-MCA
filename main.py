@@ -50,6 +50,7 @@ class GenerateRequest(BaseModel):
     doc_uuid:     str | None = None
     chat_uuid:    str        = ""
     stream:       bool       = True
+    tools:        list[dict] = []
 
 class SummarizeRequest(BaseModel):
     messages: list[dict]
@@ -147,13 +148,16 @@ async def openai_chat_completions(
 
     stream_mode = bool(body.get("stream", False))
     client_uuid = x_client_uuid or "anonymous"
+    tools_param = body.get("tools", [])
+    mcp_servers_param = body.get("mcp_servers", [])
+    web_search_param = body.get("web_search", False)
 
     async def event_stream():
         try:
             async for chunk in run_pipeline(
                 messages        = messages,
-                web_search_on   = body.get("web_search", False),
-                mcp_servers     = body.get("mcp_servers", []),
+                web_search_on   = web_search_param,
+                mcp_servers     = mcp_servers_param,
                 doc_uuid        = body.get("doc_uuid"),
                 chat_uuid       = body.get("chat_uuid", ""),
                 client_uuid     = client_uuid,
@@ -216,8 +220,8 @@ async def openai_chat_completions(
     try:
         async for chunk in run_pipeline(
             messages        = messages,
-            web_search_on   = body.get("web_search", False),
-            mcp_servers     = body.get("mcp_servers", []),
+            web_search_on   = web_search_param,
+            mcp_servers     = mcp_servers_param,
             doc_uuid        = body.get("doc_uuid"),
             chat_uuid       = body.get("chat_uuid", ""),
             client_uuid     = client_uuid,

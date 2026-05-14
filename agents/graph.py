@@ -1,27 +1,25 @@
 """
-agents/graph.py — LangGraph граф агентов.
+agents/graph.py — Граф агентов MCA.
 
 Поток:
-  router_node → context_node → generate_node → critic_node
-                                      ↑               |
-                                      └── retry ───── ┘
+  router → load_mcp_tools → generate_with_tools → critic
+                                          ↑               |
+                                          └── retry ───── ┘
 
-Стриминг происходит прямо во время генерации — пользователь видит
-<think>...</think> рассуждения в реальном времени. Если критик
-отклоняет ответ — в стрим отправляется специальный SSE-эвент,
-фронтенд показывает блок с замечанием, затем стримится улучшенный ответ.
+Модель сама решает когда вызывать инструменты (web_search, rag_search,
+mcp_call_tool). Инструменты передаются как tool schemas в запрос к LLM.
+Результаты выполнения инструментов возвращаются модели, и она продолжает
+ответ с учётом полученной информации.
 """
 from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from typing import AsyncIterator
 
-from langgraph.graph import StateGraph, END
-
 from services.llm    import stream_generate, generate_once
+from services.llm    import WEB_SEARCH_TOOL, RAG_SEARCH_TOOL, MCP_TOOL
 from services.router import get_router
-from services.rag    import get_rag
-from services.search import web_search
+from services.mcp    import list_tools
 
 MAX_RETRIES        = 2   # максимум retry после первой попытки
 CRITIC_PASS_SCORE  = 7   # минимальная оценка критика из 10
@@ -41,9 +39,6 @@ class AgentState:
     topic:             str         = "general"
     role_instruction:  str         = ""
 
-    rag_context:       str         = ""
-    web_context:       str         = ""
-    enriched_messages: list[dict]  = field(default_factory=list)
 
 async def router_node(state: AgentState) -> AgentState:
     router = await get_router()
@@ -52,61 +47,58 @@ async def router_node(state: AgentState) -> AgentState:
     state.role_instruction = result["role"]
     return state
 
-async def context_node(state: AgentState) -> AgentState:
-    import asyncio
-    tasks = []
+
+async def load_mcp_tools(servers: list[str]) -> list[dict]:
+    """
+    Загружает список инструментов из всех MCP серверов.
+    Возвращает список tool schemas в формате OpenAI API.
+    """
+    all_tools = []
+    if not servers:
+        return all_tools
+
+    for server_url in servers:
+        try:
+            tools = await list_tools(server_url)
+            for tool in tools:
+                # Добавляем URL сервера в параметры каждого инструмента,
+                # чтобы модель могла его использовать при вызове
+                if "function" in tool and "parameters" in tool.get("function", {}):
+                    all_tools.append(tool)
+        except Exception:
+            continue
+
+    return all_tools
+
+
+def _build_available_tools(state: AgentState) -> list[dict]:
+    """
+    Собирает список доступных инструментов для модели.
+
+    Всегда доступны: web_search, rag_search.
+    mcp_call_tool доступен только если есть MCP серверы.
+    """
+    tools = []
+
+    # Web search всегда доступен (модель сама решит когда использовать)
+    if state.web_search:
+        tools.append(WEB_SEARCH_TOOL)
+
+    # RAG search доступен если есть документ
     if state.doc_uuid and state.chat_uuid:
-        tasks.append(_fetch_rag(state))
-    else:
-        state.rag_context = ""
-    if state.web_search and state.query:
-        tasks.append(_fetch_web(state))
-    else:
-        state.web_context = ""
-    if tasks:
-        await asyncio.gather(*tasks)
-    state.enriched_messages = _inject_context(
-        state.messages, state.rag_context, state.web_context
-    )
-    return state
+        tools.append(RAG_SEARCH_TOOL)
 
+    # MCP tools если есть серверы
+    if state.mcp_servers:
+        tools.append(MCP_TOOL)
 
-async def _fetch_rag(state: AgentState):
-    rag    = get_rag()
-    chunks = await rag.search(
-        query=state.query, chat_uuid=state.chat_uuid,
-        client_uuid=state.client_uuid, encryption_key=state.encryption_key,
-    )
-    if chunks:
-        state.rag_context = "[Релевантные фрагменты документа]:\n" + "\n---\n".join(chunks)
-
-
-async def _fetch_web(state: AgentState):
-    state.web_context = await web_search(state.query)
-
-
-def _inject_context(messages, rag_ctx, web_ctx):
-    if not messages:
-        return messages
-    extra = ""
-    if rag_ctx: extra += f"\n\n{rag_ctx}"
-    if web_ctx: extra += f"\n\n{web_ctx}"
-    if not extra:
-        return messages
-    result = [dict(m) for m in messages]
-    for i in range(len(result) - 1, -1, -1):
-        if result[i]["role"] == "user":
-            result[i]["content"] += extra
-            break
-    return result
+    return tools
 
 
 # =============================================================================
 # PUBLIC API — run_pipeline
-# Граф здесь не используется как StateGraph-компилированный объект,
-# потому что нам нужен сквозной стриминг через всю цепочку включая retry.
-# Логика проще и прозрачнее как прямая async-функция.
 # =============================================================================
+
 async def run_pipeline(
     messages:       list[dict],
     web_search_on:  bool       = False,
@@ -117,10 +109,17 @@ async def run_pipeline(
     encryption_key: str | None = None,
 ) -> AsyncIterator[str]:
     """
-    Полный пайплайн с живым стримингом и агентом-критиком.
+    Полный пайплайн с native tool calling.
 
-    SSE-эвенты которые отправляются фронту:
-      data: {"token": "..."}           — токен ответа (включая <think> теги)
+    Модель сама решает когда использовать инструменты:
+    1. Router классифицирует запрос и задаёт роль
+    2. Собираются доступные инструменты (web_search, rag_search, mcp)
+    3. Модель генерирует ответ, вызывая инструменты через tool_calls
+    4. Результаты инструментов возвращаются модели
+    5. Critic оценивает финальный ответ
+
+    SSE-эвенты:
+      data: {"token": "..."}           — токен ответа
       data: {"critic": {...}}          — результат оценки критика
       data: {"retry": true}            — начинается новая попытка
       data: [DONE]                     — завершение
@@ -128,7 +127,7 @@ async def run_pipeline(
     query = _extract_last_query(messages)
 
     router = await get_router()
-    route_result   = await router.route(query)
+    route_result = await router.route(query)
     role_instruction = route_result["role"]
 
     state = AgentState(
@@ -137,9 +136,21 @@ async def run_pipeline(
         chat_uuid=chat_uuid, client_uuid=client_uuid,
         encryption_key=encryption_key,
     )
-    state = await context_node(state)
-    current_messages = state.enriched_messages
 
+    # Загружаем MCP инструменты если есть серверы
+    if state.mcp_servers:
+        mcp_tools = await load_mcp_tools(state.mcp_servers)
+    else:
+        mcp_tools = []
+
+    # Собираем доступные инструменты
+    available_tools = _build_available_tools(state)
+
+    # Добавляем MCP инструменты в список
+    if mcp_tools:
+        available_tools.extend(mcp_tools)
+
+    current_messages = list(messages)
     retry_count = 0
 
     while True:
@@ -148,16 +159,14 @@ async def run_pipeline(
             messages=current_messages,
             role_instruction=role_instruction,
             thinking=True,
+            tools=available_tools if available_tools else None,
         ):
-            # chunk — SSE строка вида "data: {...}\n\n"
-            # Пробрасываем токены напрямую в фронт
             if chunk == "data: [DONE]\n\n":
                 break
             yield chunk
 
-            # Параллельно собираем полный ответ для критика
             try:
-                data = json.loads(chunk[5:].strip())  # срезаем "data: "
+                data = json.loads(chunk[5:].strip())
                 if "token" in data:
                     full_answer += data["token"]
             except Exception:
